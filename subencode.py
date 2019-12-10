@@ -28,7 +28,7 @@ class BiggerDivision(Exception):
         self.div = div
 
 
-def check_div(x, div, good_bytes, carry=False):
+def check_div(x, div, good_bytes, carry=0, recurse=False):
     """ Check if this division works. This will try to take the target value `x`
     and divide it into `div` sections which add up to `x` and are each themselves
     in the given `good_bytes` byte string.
@@ -50,31 +50,32 @@ def check_div(x, div, good_bytes, carry=False):
 
     # Easy, no modulos
     if mod == 0 and v in good_bytes:
-        return [v] * n
+        return carry, [v] * div
 
-    # Find all possible v modifications
-    offsets = [v - c for c in good_bytes]
+    if v in good_bytes:
+        # Find all possible v modifications
+        offsets = [c - v for c in good_bytes]
 
-    # How many entries do we want to split this into?
-    for split in range(1, div):
-        # Iterate over all possibilities
-        for offset_list in itertools.combinations_with_replacement(offsets, split):
-            # Check if this works
-            if sum(offset_list) == m:
-                return (
-                    carry,
-                    [v + offset for offset in offset_list] + [v] * (div - split),
-                )
+        # How many entries do we want to split this into?
+        for split in range(1, div):
+            # Iterate over all possibilities
+            for offset_list in itertools.combinations_with_replacement(offsets, split):
+                # Check if this works
+                if sum(offset_list) == m:
+                    return (
+                        carry,
+                        [v + offset for offset in offset_list] + [v] * (div - split),
+                    )
 
     # If we've already carried, there's nothing we can do
-    if carry:
+    if recurse:
         raise DivisionFailed
 
     # Try to use the carry bit to our advantage
-    return check_div(x + 0x100, div, good_bytes, carry=True)
+    return check_div(x + 0x100, div, good_bytes, carry=carry + 1, recurse=True)
 
 
-def encode_byte(x, good_bytes, min_div=0, max_div=-1):
+def encode_byte(x, good_bytes, min_div=0, max_div=-1, carry=0):
     """ This function attempts to divide `x` into the minimum number of
     sub-encodings possible, starting at `min_div`.
 
@@ -95,7 +96,7 @@ def encode_byte(x, good_bytes, min_div=0, max_div=-1):
     for div in range(start_div, max_div & 0xFFFFFFFF):
         try:
             # Try to find valid values with this division
-            carry, v = check_div(x, div, good_bytes)
+            carry, v = check_div(x, div, good_bytes, carry=carry)
 
             # This means that previous encodings are wrong (or at least contain
             # null bytes). It triggers encode_chunk to start over with this as
@@ -138,11 +139,18 @@ def encode_chunk(chunk, good_bytes, max_div=-1):
             for i, x in enumerate(p32(X)):
 
                 # Account for any carry from previous encoding
-                if carry:
-                    x = x - 1
+                # Also, account for natural carry if we wrap
+                if x < carry:
+                    x = (x - carry) & 0xFF
+                    carry = 1
+                else:
+                    x = (x - carry) & 0xFF
+                    carry = 0
 
                 # Encode this byte
-                carry, values = encode_byte(x, good_bytes, min_div=div, max_div=max_div)
+                carry, values = encode_byte(
+                    x, good_bytes, min_div=div, max_div=max_div, carry=carry
+                )
 
                 # Initialize encodings matrix if this is the first result
                 if div == 0:
@@ -167,11 +175,15 @@ def encode_chunk(chunk, good_bytes, max_div=-1):
             encodings = [[] for i in range(div)]
 
 
+def decode(encodings):
+    r = 0
+    for v in encodings:
+        r = (r - v) & 0xFFFFFFFF
+    return r
+
+
 def verify_chunk(chunk, encodings):
-    value = 0
-    for encoding in encodings:
-        value = (value - encoding) & 0xFFFFFFFF
-    return chunk == value
+    return chunk == decode(encodings)
 
 
 if __name__ == "__main__":
@@ -230,11 +242,11 @@ if __name__ == "__main__":
         try:
             encodings = encode_chunk(chunk, good_bytes, max_div=args.max_div)
         except EncodingFailure:
-            log.error("Failed to encode chunk at offset {offset:x}: {chunk:08x}")
+            log.error(f"Failed to encode chunk at offset {offset:x}: {chunk:08x}")
 
         if not verify_chunk(chunk, encodings):
             log.error(
-                "Chunk verification failed at offset {offset:x}: {chunk:08x}->{encodings}"
+                f"Chunk verification failed at offset {offset:x}: {chunk:08x}->{encodings}"
             )
 
         chunks.append(encodings)
