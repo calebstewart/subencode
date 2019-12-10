@@ -32,6 +32,18 @@ properly load the given data into memory in a restrictive environment. The
 algorithm used here is derived from various articles, but as an example, a good
 article can be read [here](https://marcosvalle.github.io/re/exploit/2018/10/05/sub-encoding.html).
 
+## Why produce this?
+
+I original wrote a rough version of this script while taking my Offensive
+Security Certified Expert (OSCE) exam. Part of the course teaches how to evade
+restrictive shellcode environments by using sub-encoding. There are some tools
+to encode shellcode in alphanumeric bytes already (e.g. Slink or msfvenom), but
+for the exam we are not allowed to use automated tools. The course does not hold
+your hand in figuring out this algorithm, though, so hopefully this repo will
+help someone else struggling to figure it out. In any case, it was fun to make,
+and also fun to see how restrictive I could make the character set while still
+getting valid results! Happy hacking! :)
+
 ## Algorithm/Methodology
 
 The basic idea behind sub-encoding is normally centered around the idea that
