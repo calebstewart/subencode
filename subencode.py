@@ -4,6 +4,7 @@ import argparse
 import itertools
 import resource
 import sys
+from io import BytesIO
 
 
 class EncodingFailure(Exception):
@@ -117,12 +118,12 @@ def encode_byte(x, good_bytes, min_div=0, max_div=-1, carry=0):
         raise EncodingFailure
 
 
-def encode_chunk(chunk, good_bytes, max_div=-1):
+def encode_chunk(chunk, good_bytes, initial, max_div=-1):
     """ Produce sub-encoding bytes for the given value. 
     """
 
     # Calculate a complement such that (0-X) & 0xFFFFFFFF = chunk
-    X = ((0xFFFFFFFF + 1) - chunk) & 0xFFFFFFFF
+    X = (initial - chunk) & 0xFFFFFFFF
 
     # Initialize the encodings result, carry flag, and division size
     encodings = []
@@ -175,15 +176,15 @@ def encode_chunk(chunk, good_bytes, max_div=-1):
             encodings = [[] for i in range(div)]
 
 
-def decode(encodings):
-    r = 0
+def decode(encodings, initial):
+    r = initial
     for v in encodings:
         r = (r - v) & 0xFFFFFFFF
     return r
 
 
-def verify_chunk(chunk, encodings):
-    return chunk == decode(encodings)
+def verify_chunk(chunk, encodings, initial):
+    return chunk == decode(encodings, initial)
 
 
 if __name__ == "__main__":
@@ -192,7 +193,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Sub-encode the given data for use in exploits with restrictive bad bytes"
     )
-    parser.add_argument(
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
+        "--target", "-t", type=int, help="The target value for the register"
+    )
+    input_group.add_argument(
         "--input", "-i", default="-", help="File which contains the data to be encoded"
     )
     group = parser.add_mutually_exclusive_group(required=True)
@@ -209,6 +214,12 @@ if __name__ == "__main__":
         default=10,
         help="Maximum number of divisions to find sub-encoding (default: 10)",
     )
+    parser.add_argument(
+        "--initial",
+        type=int,
+        default=0,
+        help="The initial value of the register you are filling (default: 0)",
+    )
     args = parser.parse_args()
 
     # Grab good bytes list
@@ -220,7 +231,9 @@ if __name__ == "__main__":
         good_bytes = bytes([c for c in range(256) if c not in bad_bytes])
 
     # Open and read data
-    if args.input == "-":
+    if args.target:
+        data = BytesIO(p32(args.target))
+    elif args.input == "-":
         data = sys.stdin.buffer
     else:
         data = open(args.input, "rb")
@@ -240,11 +253,13 @@ if __name__ == "__main__":
         chunk = u32(chunk)
 
         try:
-            encodings = encode_chunk(chunk, good_bytes, max_div=args.max_div)
+            encodings = encode_chunk(
+                chunk, good_bytes, args.initial, max_div=args.max_div
+            )
         except EncodingFailure:
             log.error(f"Failed to encode chunk at offset {offset:x}: {chunk:08x}")
 
-        if not verify_chunk(chunk, encodings):
+        if not verify_chunk(chunk, encodings, args.initial):
             log.error(
                 f"Chunk verification failed at offset {offset:x}: {chunk:08x}->{encodings}"
             )
